@@ -1,7 +1,7 @@
 from flask import Flask, abort, request, jsonify
 from flask_cors import CORS
-from .models import setup_db, Actor, Movie
-from .auth import requires_auth
+from models import setup_db, Actor, Movie
+from auth import requires_auth
 
 def create_app(test_config=None):
     # create and configure the app
@@ -11,13 +11,16 @@ def create_app(test_config=None):
         setup_db(app)
     else:
         database_path = test_config.get('SQLALCHEMY_DATABASE_URI')
-        setup_db(app, database_path=database_path)
+        setup_db(app, database_path)
+        
     CORS(app)
     
     @app.after_request
     def after_request(response):
-        response.headers.add('Access-Control-Allow-Headers', 'Content-Type,Authorization,true')
-        response.headers.add('Access-Control-Allow-Methods', 'GET,PUT,POST,DELETE,PATCH, OPTIONS')
+        response.headers.add("Access-Control-Allow-Origin", "*")
+        response.headers.add('Access-Control-Allow-Headers', "*")
+        response.headers.add('Access-Control-Allow-Methods', "*")
+
         return response
 
     @app.route('/',methods=['GET'])
@@ -69,7 +72,7 @@ def create_app(test_config=None):
             abort(401)
         if payload in [400,403]: 
             abort(payload)
-        try:
+        try: 
             body = request.get_json()
             movie = Movie(
                 title = body['title'],
@@ -82,7 +85,7 @@ def create_app(test_config=None):
                 'success': True
             })
         except:
-            abort(404)
+            abort(400)
             
     @app.route('/movies/<int:id>', methods=['PATCH'])
     @requires_auth('modify:movies')
@@ -111,31 +114,30 @@ def create_app(test_config=None):
                 'message': True
             })
         except:
-            abort(404)
+            return jsonify({"message": "create movie fail"})
 
-        @app.route('/movies/<int:id>', methods=['DELETE'])
-        @requires_auth('delete:movies')
-        def delete_movie(payload,id):
-            if payload is None: 
-                abort(401)
-            if payload in [400,403]: 
-                abort(payload)
-                
-            try:
-                movie = Movie.query.filter(Movie.id == id).one_or_none()
-                
-                if not movie:
-                    return jsonify({"message": "Movie not found"}), 404
-                
-                movie_remove = movie
-                movie.remove()
+    @app.route('/movies/<int:id>', methods=['DELETE'])
+    @requires_auth('delete:movies')
+    def delete_movie(payload, id):
+        if payload is None: 
+            abort(401)
+        if payload in [400,403]: 
+            abort(payload)
+        try:   
+            movie = Movie.query.filter(Movie.id == id).one_or_none()
+            
+            if not movie:
+                return jsonify({"message": "Movie not found"}), 404
+            
+            movie_remove = movie
+            movie.delete()
 
-                return jsonify({
-                    'movie': movie_remove.format(),
-                    "message": True
-                    })
-            except:
-                abort(404)
+            return jsonify({
+                'movie': movie_remove.format(),
+                "success": True
+                })
+        except Exception as e:
+            return jsonify({f"Error occurred: {e}"})
 
     # endregion
     
@@ -159,16 +161,16 @@ def create_app(test_config=None):
         except:
             abort(404)
             
-    @app.route('/actors<int:id>', methods=['GET'])
+    @app.route('/actors/<int:id>', methods=['GET'])
     @requires_auth('read:actors')
-    def get_actor(payload):
+    def get_actor(payload, id):
         if payload is None: 
             abort(401)
         if payload in [400,403]: 
             abort(payload)
             
         try:
-            actors = Actor.query.filter(Actor.id, id).one_or_none()
+            actors = Actor.query.filter(Actor.id == id).one_or_none()
             if not actors:
                 return jsonify({"message": "Actor not found"}), 404
             
@@ -186,27 +188,34 @@ def create_app(test_config=None):
             abort(401)
         if payload in [400,403]: 
             abort(payload)
-        try:   
+        try:     
             body = request.get_json()
-            actor = Actor(
-                name = body['name'], 
-                age = body['age'], 
-                gender = body['gender'],
-                movie = body['movie'],
+            movie_id = body['movie_id']
+            if movie_id is not None:
+                movie = Movie.query.filter(Movie.id == movie_id).one_or_none()
+                if movie is None:
+                    return jsonify({"message": "movie not found"}), 404
+                
+                actor = Actor(
+                    name = body['name'], 
+                    age = body['age'], 
+                    gender = body['gender'],
+                    movie_id = movie_id,
+                    movie = movie
                 )
-            
-            actor.insert()
-            
-            return jsonify({
-                'actor': actor.format(),
-                'success': True
-            })
-        except:
-            abort(404)
+                actor.insert()
+                return jsonify({
+                    'actor': actor.format(),
+                    'success': True
+                })
+            else:
+                return jsonify({"message": "movie_id not found"}), 404
+        except Exception as e:
+            return jsonify({f"Error occurred: {e}"})
     
     @app.route('/actors/<int:id>', methods=['PATCH'])
     @requires_auth('modify:actors')
-    def update_actor(payload, id):
+    def update_actor(payload,id):
         if payload is None: 
             abort(401)
         if payload in [400,403]: 
@@ -245,16 +254,48 @@ def create_app(test_config=None):
         try: 
             actor = Actor.query.filter(Actor.id == id).one_or_none()
             
-            if not actor:
+            if actor is None :
                 return jsonify({"message": "Actor not found"}), 404
-            actor_remove = actor
-            actor.remove()
+            actor.delete()
             
             return jsonify({
-                'actor': actor_remove.format(),
+                'actors_deleted_id': actor.id,
                 "message": True
                 })
-        except:
-            abort(404)
+        except Exception as e:
+            return jsonify({f"Error occurred: {e}"})
             
+            
+            
+    #region ErrorHandler
+    @app.errorhandler(400)
+    def bad_request(error):
+        return (
+            jsonify({"success": False, "error": 400, "message": "bad request."}),
+            400,
+        )
+        
+    @app.errorhandler(401)
+    def bad_request(error):
+        return (
+            jsonify({"success": False, "error": 401, "message": "Unauthorized"}),
+            401,
+        )
+            
+    @app.errorhandler(403)
+    def bad_request(error):
+        return (
+            jsonify({"success": False, "error": 403, "403": "Forbidden"}),
+            403,
+        )
+        
+    @app.errorhandler(404)
+    def not_found(error):
+        return (
+            jsonify({"success": False, "error": 404, "message": "resource not found"}),
+            404,
+        )
+
+    #end region
+    
     return app

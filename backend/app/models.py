@@ -77,5 +77,5 @@ class Actor(db.Model):
             'age': self.age,
             'gender': self.gender,
             'movie_id': self.movie_id,
-            'movie': self.movie
+            'movie': self.movie.format()
         }
